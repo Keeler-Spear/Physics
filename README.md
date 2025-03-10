@@ -1,5 +1,5 @@
 # Physics
-Projects for PHY-4611: Computational Physics
+Code for PHY-4611: Computational Physics
 
 # File Summary
 
