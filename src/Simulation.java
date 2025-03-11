@@ -5,8 +5,9 @@ import java.io.PrintWriter;
 import java.util.ArrayList;
 
 public class Simulation {
-    final static double TOL = 0.000001;
     final static int MAX_ITERATIONS = 1000;
+    final static Matrix g = new Matrix(new double[] {0, -9.806}); //Gravitational constant (m/s^2)
+    final static Matrix noWind = new Matrix(new double[] {0.0, 0.0});
     final static Matrix vDrag = new Matrix(new double[] {0, 11.176, 22.352, 33.528, 44.704, 55.88});
     final static Matrix cDrag = new Matrix(new double[] {0.5, 0.5, 0.5, 0.4, 0.28, 0.23});
 
@@ -22,40 +23,41 @@ public class Simulation {
      * @param wind The speed of the wind.
      * @param constantDrag If the drag coefficient of the object is constant.
      * @return A matrix containing the x and y positions of the projectile at each time step.
-     * @throws IllegalArgumentException TODO
      */
     public static Matrix projectileMotion(Item object, double height, double speed, double angle, double timeStep, int method, boolean air, Matrix wind, boolean constantDrag) {
-        double t = 0;
-        ArrayList<Double> time = new ArrayList<>();
-        ArrayList<Double> x = new ArrayList<>();
-        ArrayList<Double> y = new ArrayList<>();
+
+        //Initializing Variables
+        double t = 0; //Current time (seconds)
+        ArrayList<Double> time = new ArrayList<>(); //Array list to store time values
+        ArrayList<Double> x = new ArrayList<>(); //Array list to store x values
+        ArrayList<Double> y = new ArrayList<>(); //Array list to store y values
 
         double mass = object.getMass(); //Mass (km)
         double area = object.getArea(); //Cross-sectional area (m^2)
         double coD = object.getDrag(); //Coefficient of drag
-        Matrix g = new Matrix(new double[] {0, -9.81}); //Gravitational constant (m/s^2)
         double density = 1.2; //Density of air (kg/m^3)
         double airRes;
         if (air) {
             airRes = -0.5 * coD * density * area / mass; //Air Resistance
         }
         else {
-            airRes = 0.0;
+            airRes = 0.0; //If we are not using air resistance, set air resistance to zero
         }
 
         Matrix changingCOD = null;
 
         if (!constantDrag) {
-            changingCOD = Interpolation.polynomial(vDrag, cDrag, LinearAlgebra.linSpace(0, 100, timeStep));
+            changingCOD = Interpolation.polynomial(vDrag, cDrag, LinearAlgebra.linSpace(0, 100, timeStep)); //If drag is not constant, interpolate drag values
         }
 
-        Matrix r = new Matrix(new double[] {0.0, height});
-        Matrix v = new Matrix(new double[] {speed * Math.cos(angle * Math.PI / 180), speed * Math.sin(angle * Math.PI / 180)});
-        Matrix a;
-        wind = LinearAlgebra.scaleMatrix(wind, LinearAlgebra.l2Norm(wind));
-        Matrix windAcc = LinearAlgebra.scaleMatrix(wind, -airRes * LinearAlgebra.l2Norm(wind));
+        Matrix r = new Matrix(new double[] {0.0, height}); //Position vector
+        Matrix v = new Matrix(new double[] {speed * Math.cos(angle * Math.PI / 180), speed * Math.sin(angle * Math.PI / 180)}); //Velocity vector
+        Matrix vRel;
+        Matrix a; //Acceleration vector
+        Matrix windAcc = LinearAlgebra.scaleMatrix(wind, -airRes * LinearAlgebra.l2Norm(wind)); //Wind = airRes * |wind| * wind
         int j = 0;
 
+        //Calculations
         if (method == 1) { //Euler
             while ((r.getValue(2, 1) > 0 || j == 0) && j < MAX_ITERATIONS) {
                 x.add(r.getValue(1, 1));
@@ -63,14 +65,16 @@ public class Simulation {
                 time.add(t);
                 t += timeStep;
 
-                r = LinearAlgebra.addMatrices(r, v, timeStep);
+                vRel = LinearAlgebra.addMatrices(v, wind, 1);
 
-                a = LinearAlgebra.scaleMatrix(v, LinearAlgebra.l2Norm(v));
+                r = LinearAlgebra.addMatrices(r, vRel, timeStep);
+
                 if (!constantDrag) {
                     airRes = -0.5 * changingCOD.getValue(j+1, 1) * density * area / mass;
                 }
-                a = LinearAlgebra.addMatrices(LinearAlgebra.scaleMatrix(a, airRes), g, 1);
-                a = LinearAlgebra.addMatrices(a, windAcc, 1);
+
+                a = LinearAlgebra.scaleMatrix(vRel, airRes *  LinearAlgebra.l2Norm(vRel));
+                a = LinearAlgebra.addMatrices(a, g, 1);
 
                 v = LinearAlgebra.addMatrices(v, a, timeStep);
                 j++;
@@ -84,15 +88,18 @@ public class Simulation {
                 time.add(t);
                 t += timeStep;
 
-                a = LinearAlgebra.scaleMatrix(v, LinearAlgebra.l2Norm(v));
                 if (!constantDrag) {
                     airRes = -0.5 * changingCOD.getValue(j+1, 1) * density * area / mass;
                 }
-                a = LinearAlgebra.addMatrices(LinearAlgebra.scaleMatrix(a, airRes), g, 1);
-                a = LinearAlgebra.addMatrices(a, windAcc, 1);
+
+                vRel = LinearAlgebra.addMatrices(v, wind, 1);
+                a = LinearAlgebra.scaleMatrix(vRel, airRes *  LinearAlgebra.l2Norm(vRel));
+                a = LinearAlgebra.addMatrices(a, g, 1);
 
                 v = LinearAlgebra.addMatrices(v, a, timeStep);
-                r = LinearAlgebra.addMatrices(r, v, timeStep);
+                vRel = LinearAlgebra.addMatrices(v, wind, 1);
+
+                r = LinearAlgebra.addMatrices(r, vRel, timeStep);
 
                 j++;
             }
@@ -105,14 +112,16 @@ public class Simulation {
                 time.add(t);
                 t += timeStep;
 
-                a = LinearAlgebra.scaleMatrix(v, LinearAlgebra.l2Norm(v));
+
                 if (!constantDrag) {
                     airRes = -0.5 * changingCOD.getValue(j+1, 1) * density * area / mass;
                 }
-                a = LinearAlgebra.addMatrices(LinearAlgebra.scaleMatrix(a, airRes), g, 1);
-                a = LinearAlgebra.addMatrices(a, windAcc, 1);
 
-                r = LinearAlgebra.addMatrices(r, LinearAlgebra.addMatrices(v, a, timeStep / 2), timeStep);
+                vRel = LinearAlgebra.addMatrices(v, wind, 1);
+                a = LinearAlgebra.scaleMatrix(vRel, airRes *  LinearAlgebra.l2Norm(vRel));
+                a = LinearAlgebra.addMatrices(a, g, 1);
+
+                r = LinearAlgebra.addMatrices(r, LinearAlgebra.addMatrices(vRel, a, timeStep / 2), timeStep);
 
                 v = LinearAlgebra.addMatrices(v, a, timeStep);
 
@@ -133,6 +142,14 @@ public class Simulation {
 
 
         return vals;
+    }
+
+    //a = airRes * |vRel|vRel + g
+    private static Matrix calcWindAcc(Matrix v, Matrix wind, double airRes) {
+        Matrix vRel = LinearAlgebra.addMatrices(v, wind, -1);
+        Matrix a = LinearAlgebra.scaleMatrix(vRel, airRes * LinearAlgebra.l2Norm(vRel));
+        a = LinearAlgebra.addMatrices(a, g, 1);
+        return a;
     }
 
     public static void displayMotion(Matrix theory, Matrix airRes) {
