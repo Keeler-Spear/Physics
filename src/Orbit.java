@@ -44,10 +44,11 @@ public class Orbit {
         Matrix v = new Matrix(new double[] {0.0, v0});
         Matrix a;
 
-        Matrix rPlot = new Matrix(numStep, 1);
-        Matrix thPlot = new Matrix(numStep, 1);
-        Matrix tPlot = new Matrix(numStep, 1);
-        Matrix kinetic = new Matrix(numStep, 1);
+        Matrix rPlot = new Matrix (2, 1);
+        Matrix thPlot = new Matrix (2, 1);
+        Matrix tPlot = new Matrix (2, 1);
+        Matrix realTPlot = new Matrix (2, 1);
+        Matrix kinetic = new Matrix (2, 1);
         Matrix potential = new Matrix(numStep, 1);
         Matrix sol = new Matrix(2, 1);
         double t = 0.0;
@@ -59,41 +60,72 @@ public class Orbit {
                 sol = ODE.rk4System(system, t, initialConditions, t + h * numStep, h); //[rx, ry, vx, vy, ax, ay]
             }
             else if (method == 4) { //Adaptive RK4
-                sol = ODE.adaptiveRK4System(system, t, initialConditions, t + h * numStep, h, 0.9, 0.4);
+                sol = ODE.adaptiveRK4System(system, t, initialConditions, t + h * numStep, h, 0.9, 4.0);
+                realTPlot = LinearAlgebra.vectorFromColumn(sol, sol.getCols());
+                sol.removeCol(sol.getCols()); //Removing the time values
             }
             else { //AB4
                 throw new IllegalArgumentException("AB4 is not yeet supported!");
             }
         }
 
-        for (int i = 1; i <= numStep; i++) {
-            //Recording the current values
-            rNorm = LinearAlgebra.l2Norm(r);
-            rPlot.setValue(i, 1, rNorm);
-            thPlot.setValue(i, 1, Math.atan2(r.getValue(2, 1), r.getValue(1, 1)));
-            tPlot.setValue(i, 1, t);
-            kinetic.setValue(i, 1, 0.5 * MASS * Math.pow(LinearAlgebra.l2Norm(v), 2));
-            potential.setValue(i, 1, -GM * MASS / rNorm);
+        if (method == 1 || method == 2 || method == 3) {
 
-            if (method == 1) { //Euler
-                a = LinearAlgebra.scaleMatrix(r, -GM / Math.pow(rNorm, 3));
-                r = LinearAlgebra.addMatrices(r, v, h);
-                v = LinearAlgebra.addMatrices(v, a, h);
+            rPlot = new Matrix(numStep, 1);
+            thPlot = new Matrix(numStep, 1);
+            tPlot = new Matrix(numStep, 1);
+            kinetic = new Matrix(numStep, 1);
+            potential = new Matrix(numStep, 1);
+
+            for (int i = 1; i <= numStep; i++) {
+                //Recording the current values
+                rNorm = LinearAlgebra.l2Norm(r);
+                rPlot.setValue(i, 1, rNorm);
+                thPlot.setValue(i, 1, Math.atan2(r.getValue(2, 1), r.getValue(1, 1)));
+                tPlot.setValue(i, 1, t);
+                kinetic.setValue(i, 1, 0.5 * MASS * Math.pow(LinearAlgebra.l2Norm(v), 2));
+                potential.setValue(i, 1, -GM * MASS / rNorm);
+
+                if (method == 1) { //Euler
+                    a = LinearAlgebra.scaleMatrix(r, -GM / Math.pow(rNorm, 3));
+                    r = LinearAlgebra.addMatrices(r, v, h);
+                    v = LinearAlgebra.addMatrices(v, a, h);
+                } else if (method == 2) { //Euler-Cromer
+                    a = LinearAlgebra.scaleMatrix(r, -GM / Math.pow(rNorm, 3));
+                    v = LinearAlgebra.addMatrices(v, a, h);
+                    r = LinearAlgebra.addMatrices(r, v, h);
+                } else { //Other methods
+                    r.setValue(1, 1, sol.getValue(i, 1));
+                    r.setValue(2, 1, sol.getValue(i, 2));
+                    v.setValue(1, 1, sol.getValue(i, 3));
+                    v.setValue(2, 1, sol.getValue(i, 4));
+                }
+
+                t += h;
             }
-            else if (method == 2) { //Euler-Cromer
-                a = LinearAlgebra.scaleMatrix(r, -GM / Math.pow(rNorm, 3));
-                v = LinearAlgebra.addMatrices(v, a, h);
-                r = LinearAlgebra.addMatrices(r, v, h);
-            }
-            else { //Other methods
+        }
+
+        if (method == 4) {
+            tPlot = realTPlot;
+            rPlot = new Matrix(sol.getRows(), 1);
+            thPlot = new Matrix(sol.getRows(), 1);
+            kinetic = new Matrix(sol.getRows(), 1);
+            potential = new Matrix(sol.getRows(), 1);
+
+
+
+            for (int i = 1; i <= sol.getRows(); i++) {
+                rNorm = LinearAlgebra.l2Norm(r);
+                rPlot.setValue(i, 1, rNorm);
+                thPlot.setValue(i, 1, Math.atan2(r.getValue(2, 1), r.getValue(1, 1)));
+                kinetic.setValue(i, 1, 0.5 * MASS * Math.pow(LinearAlgebra.l2Norm(v), 2));
+                potential.setValue(i, 1, -GM * MASS / rNorm);
+
                 r.setValue(1, 1, sol.getValue(i, 1));
                 r.setValue(2, 1, sol.getValue(i, 2));
                 v.setValue(1, 1, sol.getValue(i, 3));
                 v.setValue(2, 1, sol.getValue(i, 4));
             }
-
-            t += h;
-
         }
 
         return new Matrix[] {thPlot, rPlot, tPlot, kinetic, potential};
