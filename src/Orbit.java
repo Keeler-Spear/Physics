@@ -5,17 +5,23 @@ import java.io.PrintWriter;
 
 public class Orbit {
 
+    //Static variable and function declaration
     final static double GM = 4 * Math.PI * Math.PI; //Grav. const. * Mass of Sun (au^3/yr^2)
     final static double MASS = 1; //Mass of the commit
     final static double ADAPTRK = 1e-3;
+    final static double ALPHA = -0.5;
 
-    //x = [t, rx, ry, vx, vy, ax, ay]
+    //x = [t, rx, ry, vx, vy]
     static final NFunction<Double> rx = (x) -> x[3];
     static final NFunction<Double> ry = (x) -> x[4];
     static final NFunction<Double> vx = (x) -> -GM * x[1] / Math.pow(Math.sqrt(Math.pow(x[1], 2) + Math.pow(x[2], 2)), 3);
     static final NFunction<Double> vy = (x) -> -GM * x[2] / Math.pow(Math.sqrt(Math.pow(x[1], 2) + Math.pow(x[2], 2)), 3);
 
+    static final NFunction<Double> mondVx = (x) -> -GM * x[1] * (1 - ALPHA / Math.sqrt(Math.pow(x[1], 2) + Math.pow(x[2], 2))) / Math.pow(Math.sqrt(Math.pow(x[1], 2) + Math.pow(x[2], 2)), 3);
+    static final NFunction<Double> mondVy = (x) -> -GM * x[2] * (1 - ALPHA / Math.sqrt(Math.pow(x[1], 2) + Math.pow(x[2], 2))) / Math.pow(Math.sqrt(Math.pow(x[1], 2) + Math.pow(x[2], 2)), 3);
+
     static NFunction<Double>[] system = new NFunction[]{rx, ry, vx, vy};
+    static NFunction<Double>[] mondSystem = new NFunction[]{rx, ry, mondVx, mondVy};
 
     /**
      * Calculates the orbit of a commit.
@@ -25,6 +31,8 @@ public class Orbit {
      * @param numStep The number of steps the program should take
      * @param h The time step for the program to use, in yr.
      * @param method The numerical method to be used. 1 = Euler, 2 = Euler-Cromer, 3 = RK4, 4 = Adaptive RK4, 5 = AB4
+     * @param useMOND If Modified Newtonian Dynamics should be used.
+     * @param useDrag If drag should be used in the calculations.
      * @return An array of matrices containing:
      *         <ul>
      *             <li> A matrix containing the angle values of the motion</li>
@@ -35,7 +43,7 @@ public class Orbit {
      *         </ul>
      * @throws IllegalArgumentException If the method selected is invalid.
      */
-    public static Matrix[] calculate(double r0, double v0, int numStep, double h, int method) {
+    public static Matrix[] calculate(double r0, double v0, int numStep, double h, int method, boolean useMOND, boolean useDrag) {
         if (method > 5) {
             throw new IllegalArgumentException("Invalid Method!");
         }
@@ -54,19 +62,49 @@ public class Orbit {
         double t = 0.0;
         double rNorm;
         double[] initialConditions = {r0, 0.0, 0.0, v0};
+        double c = GM * MASS / (100 * Math.abs(r0) * Math.abs(v0));
+
+        //These have to be defined locally so we can use the correct coefficient.
+        NFunction<Double> dragVx = (x) -> -GM * x[1] / Math.pow(Math.sqrt(Math.pow(x[1], 2) + Math.pow(x[2], 2)), 3)
+                - c * Math.sqrt(Math.pow(x[3], 2) + Math.pow(x[4], 2)) * x[3] / MASS; //Drag
+        NFunction<Double> dragVy = (x) -> -GM * x[2] / Math.pow(Math.sqrt(Math.pow(x[1], 2) + Math.pow(x[2], 2)), 3)
+                - c * Math.sqrt(Math.pow(x[3], 2) + Math.pow(x[4], 2)) * x[4] / MASS;
+
+        NFunction<Double>[] dragSystem = new NFunction[]{rx, ry, dragVx, dragVy};
+
 
         if (method != 1 && method != 2) { //Solve the ODE using an external method
             if (method == 3) { //RK4
-                sol = ODE.rk4System(system, t, initialConditions, t + h * numStep, h); //[rx, ry, vx, vy, ax, ay]
+                if (useMOND) {
+                    sol = ODE.rk4System(mondSystem, t, initialConditions, t + h * numStep, h); //[rx, ry, vx, vy, ax, ay]
+                }
+
+                else if (useDrag) {
+                    sol = ODE.rk4System(dragSystem, t, initialConditions, t + h * numStep, h); //[rx, ry, vx, vy, ax, ay]
+                }
+
+                else {
+                    sol = ODE.rk4System(system, t, initialConditions, t + h * numStep, h); //[rx, ry, vx, vy, ax, ay]
+                }
             }
             else if (method == 4) { //Adaptive RK4
-                sol = ODE.adaptiveRK4System(system, t, initialConditions, t + h * numStep, h, 0.9, 4.0);
+                if (useMOND) {
+                    sol = ODE.adaptiveRK4System(mondSystem, t, initialConditions, t + h * numStep, h, 0.9, 4.0);
+                }
+                else if (useDrag) {
+                    sol = ODE.adaptiveRK4System(dragSystem, t, initialConditions, t + h * numStep, h, 0.9, 4.0); //S1 is different here because the fiction makes the orbit really want to shrink
+                }
+                else {
+                    sol = ODE.adaptiveRK4System(system, t, initialConditions, t + h * numStep, h, 0.9, 4.0);
+
+                }
                 realTPlot = LinearAlgebra.vectorFromColumn(sol, sol.getCols());
                 sol.removeCol(sol.getCols()); //Removing the time values
             }
             else { //AB4
                 throw new IllegalArgumentException("AB4 is not yeet supported!");
             }
+
         }
 
         if (method == 1 || method == 2 || method == 3) {
@@ -131,6 +169,19 @@ public class Orbit {
         return new Matrix[] {thPlot, rPlot, tPlot, kinetic, potential};
     }
 
+    public static double calculateOrbitOfProcession(double r0, double v0) {
+        Matrix r = new Matrix(new double[] {r0, 0.0});
+        Matrix v = new Matrix(new double[] {0.0, v0});
+
+        v = LinearAlgebra.scaleMatrix(v, MASS); //p = m * v
+
+        r = LinearAlgebra.crossProduct(r, v); //L = r x p
+
+        double oop = 1 + (GM * MASS * MASS * ALPHA / (Math.pow(LinearAlgebra.l2Norm(r), 2)));
+        oop = Math.sqrt(oop);
+        oop = 360 * (1 - oop) / oop;
+        return oop;
+    }
 
     public static void plotTrajectory(Matrix theta, Matrix r) {
         try {
@@ -208,7 +259,7 @@ public class Orbit {
                 out.println("hplot = np.array(" + hs.npString() + ")");
                 out.println("vplot = np.array(" + vs.npString() + ")");
                 //Creating the plot
-                out.println("plt.loglog(vplot, hplot, marker='o', linestyle='-', color='b', label='Given Data')");
+                out.println("plt.loglog(vplot, hplot, marker='o', linestyle='-', color='b', label='Initial Velocity and Ideal Step Size')");
                 out.println("plt.xlabel('Initial Velocity AU/yr')");
                 out.println("plt.ylabel('Step Size')");
                 out.println("plt.title('Step Size VS. Initial Velocity')");
